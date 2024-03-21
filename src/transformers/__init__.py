@@ -203,6 +203,10 @@ _import_structure = {
         "BioGptTokenizer",
     ],
     "models.bit": ["BIT_PRETRAINED_CONFIG_ARCHIVE_MAP", "BitConfig"],
+    "models.bitllama": [
+        "BITLLAMA_PRETRAINED_CONFIG_ARCHIVE_MAP",
+        "LlamaConfig",
+    ],
     "models.blenderbot": [
         "BLENDERBOT_PRETRAINED_CONFIG_ARCHIVE_MAP",
         "BlenderbotConfig",
@@ -1602,6 +1606,14 @@ else:
             "BitForImageClassification",
             "BitModel",
             "BitPreTrainedModel",
+        ]
+    )
+    _import_structure["models.bitnet"].extend(
+        [
+            "BitLlamaForCausalLM",
+            "BitLlamaForSequenceClassification",
+            "BitLlamaModel",
+            "BitLlamaPreTrainedModel",
         ]
     )
     _import_structure["models.blenderbot"].extend(
