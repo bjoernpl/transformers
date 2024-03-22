@@ -20,6 +20,97 @@ Quantization techniques focus on representing data with less information while a
 
 Transformers supports several quantization schemes to help you run inference with large language models (LLMs) and finetune adapters on quantized models. This guide will show you how to use Activation-aware Weight Quantization (AWQ), AutoGPTQ, and bitsandbytes.
 
+<Tip>
+
+Interested in adding a new quantization method to Transformers? Read the [HfQuantizer](./hf_quantizer) guide to learn how!
+
+</Tip>
+
+## Quanto
+
+<Tip>
+
+Try Quanto + transformers with this [notebook](https://colab.research.google.com/drive/16CXfVmtdQvciSh9BopZUDYcmXCDpvgrT?usp=sharing)!
+
+</Tip>
+
+
+[🤗 Quanto](https://github.com/huggingface/quanto) library is a versatile pytorch quantization toolkit. The quantization method used is the linear quantization. Quanto provides several unique features such as:
+
+- weights quantization (`float8`,`int8`,`int4`,`int2`)
+- activation quantization (`float8`,`int8`)
+- modality agnostic (e.g CV,LLM)
+- device agnostic (e.g CUDA,MPS,CPU)
+- compatibility with `torch.compile`
+- easy to add custom kernel for specific device
+- supports quantization aware training
+<!-- Add link to the blogpost -->
+
+Before you begin, make sure the following libraries are installed:
+
+```bash
+pip install quanto
+pip install git+https://github.com/huggingface/accelerate.git
+pip install git+https://github.com/huggingface/transformers.git
+```
+
+Now you can quantize a model by passing [`QuantoConfig`] object in the [`~PreTrainedModel.from_pretrained`] method. This works for any model in any modality, as long as it contains `torch.nn.Linear` layers. 
+
+The integration with transformers only supports weights quantization. For the more complex use case such as activation quantization, calibration and quantization aware training, you should use [quanto](https://github.com/huggingface/quanto) library instead. 
+
+```py
+from transformers import AutoModelForCausalLM, AutoTokenizer, QuantoConfig
+
+model_id = "facebook/opt-125m"
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+quantization_config = QuantoConfig(weights="int8")
+quantized_model = AutoModelForCausalLM.from_pretrained(model_id, device_map="cuda:0", quantization_config=quantization_config)
+```
+
+Note that serialization is not supported yet with transformers but it is coming soon! If you want to save the model, you can use quanto library instead.
+
+Quanto library uses linear quantization algorithm for quantization. Even though this is a basic quantization technique, we get very good results! Have a look at the following becnhmark (llama-2-7b on perplexity metric). You can find more benchamarks [here](https://github.com/huggingface/quanto/tree/main/bench/generation)
+
+<div class="flex gap-4">
+  <div>
+    <img class="rounded-xl" src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/quantization/NousResearch-Llama-2-7b-hf_Perplexity.png" alt="llama-2-7b-quanto-perplexity" />
+  </div>
+</div>
+
+The library is versatible enough to be compatible with most PTQ optimization algorithms. The plan in the future is to integrate the most popular algorithms in the most seamless possible way (AWQ, Smoothquant).
+
+## AQLM
+
+
+
+Try AQLM on [Google Colab](https://colab.research.google.com/drive/1-xZmBRXT5Fm3Ghn4Mwa2KRypORXb855X?usp=sharing)!
+
+Additive Quantization of Language Models ([AQLM](https://arxiv.org/abs/2401.06118)) is a Large Language Models compression method. It quantizes multiple weights together and take advantage of interdependencies between them. AQLM represents groups of 8-16 weights as a sum of multiple vector codes.
+
+Inference support for AQLM is realised in the `aqlm` library. Make sure to install it to run the models (note aqlm works only with python>=3.10):
+```bash
+pip install aqlm[gpu,cpu]
+```
+
+The library provides efficient kernels for both GPU and CPU inference and training.
+
+The instructions on how to quantize models yourself, as well as all the relevant code can be found in the corresponding GitHub [repository](https://github.com/Vahe1994/AQLM).
+
+### PEFT
+
+Starting with version `aqlm 1.0.2`, AQLM supports Parameter-Efficient Fine-Tuning in a form of [LoRA](https://huggingface.co/docs/peft/package_reference/lora) integrated into the [PEFT](https://huggingface.co/blog/peft) library.
+
+### AQLM configurations
+
+AQLM quantization setups vary mainly on the number of codebooks used as well as codebook sizes in bits. The most popular setups, as well as inference kernels they support are:
+ 
+| Kernel | Number of codebooks | Codebook size, bits | Notation | Accuracy | Speedup     | Fast GPU inference | Fast CPU inference |
+|---|---------------------|---------------------|----------|-------------|-------------|--------------------|--------------------|
+| Triton | K                   | N                  | KxN     | -        | Up to ~0.7x | ✅                  | ❌                  |
+| CUDA | 1                   | 16                  | 1x16     | Best        | Up to ~1.3x | ✅                  | ❌                  |
+| CUDA | 2                   | 8                   | 2x8      | OK          | Up to ~3.0x | ✅                  | ❌                  |
+| Numba | K                   | 8                   | Kx8      | Good        | Up to ~4.0x | ❌                  | ✅                  |
+
 ## AWQ
 
 <Tip>
@@ -30,7 +121,7 @@ Try AWQ quantization with this [notebook](https://colab.research.google.com/driv
 
 [Activation-aware Weight Quantization (AWQ)](https://hf.co/papers/2306.00978) doesn't quantize all the weights in a model, and instead, it preserves a small percentage of weights that are important for LLM performance. This significantly reduces quantization loss such that you can run models in 4-bit precision without experiencing any performance degradation.
 
-There are several libraries for quantizing models with the AWQ algorithm, such as [llm-awq](https://github.com/mit-han-lab/llm-awq), [autoawq](https://github.com/casper-hansen/AutoAWQ) or [optimum-intel](https://huggingface.co/docs/optimum/main/en/intel/optimization_inc). Transformers supports loading models quantized with the llm-awq and autoawq libraries. This guide will show you how to load models quantized with autoawq, but the processs is similar for llm-awq quantized models.
+There are several libraries for quantizing models with the AWQ algorithm, such as [llm-awq](https://github.com/mit-han-lab/llm-awq), [autoawq](https://github.com/casper-hansen/AutoAWQ) or [optimum-intel](https://huggingface.co/docs/optimum/main/en/intel/optimization_inc). Transformers supports loading models quantized with the llm-awq and autoawq libraries. This guide will show you how to load models quantized with autoawq, but the process is similar for llm-awq quantized models.
 
 Make sure you have autoawq installed:
 
@@ -82,52 +173,25 @@ AWQ quantization can also be combined with [FlashAttention-2](perf_infer_gpu_one
 ```py
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-model = AutoModelForCausalLM.from_pretrained("TheBloke/zephyr-7B-alpha-AWQ", use_flash_attention_2=True, device_map="cuda:0")
+model = AutoModelForCausalLM.from_pretrained("TheBloke/zephyr-7B-alpha-AWQ", attn_implementation="flash_attention_2", device_map="cuda:0")
 ```
 
+### Fused modules
 
-### Benchmarks
+Fused modules offers improved accuracy and performance and it is supported out-of-the-box for AWQ modules for [Llama](https://huggingface.co/meta-llama) and [Mistral](https://huggingface.co/mistralai/Mistral-7B-v0.1) architectures, but you can also fuse AWQ modules for unsupported architectures.
 
-We performed some speed, throughput and latency benchmarks using [`optimum-benchmark`](https://github.com/huggingface/optimum-benchmark) library. 
+<Tip warning={true}>
 
-Note at that time of writing this documentation section, the available quantization methods were: `awq`, `gptq` and `bitsandbytes`.
+Fused modules cannot be combined with other optimization techniques such as FlashAttention-2.
 
-The benchmark was run on a NVIDIA-A100 instance and the model used was [`TheBloke/Mistral-7B-v0.1-AWQ`](https://huggingface.co/TheBloke/Mistral-7B-v0.1-AWQ) for the AWQ model, [`TheBloke/Mistral-7B-v0.1-GPTQ`](https://huggingface.co/TheBloke/Mistral-7B-v0.1-GPTQ) for the GPTQ model. We also benchmarked it against `bitsandbytes` quantization methods and native `float16` model. Some results are shown below:
+</Tip>
 
-<div style="text-align: center">
-<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/quantization/forward_memory_plot.png">
-</div>
+<hfoptions id="fuse">
+<hfoption id="supported architectures">
 
-<div style="text-align: center">
-<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/quantization/generate_memory_plot.png">
-</div>
+To enable fused modules for supported architectures, create an [`AwqConfig`] and set the parameters `fuse_max_seq_len` and `do_fuse=True`. The `fuse_max_seq_len` parameter is the total sequence length and it should include the context length and the expected generation length. You can set it to a larger value to be safe.
 
-<div style="text-align: center">
-<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/quantization/generate_throughput_plot.png">
-</div>
-
-<div style="text-align: center">
-<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/quantization/forward_latency_plot.png">
-</div>
-
-You can find the full results together with packages versions in [this link](https://github.com/huggingface/optimum-benchmark/tree/main/examples/running-mistrals).
-
-From the results it appears that AWQ quantization method is the fastest quantization method for inference, text generation and among the lowest peak memory for text generation. However, AWQ seems to have the largest forward latency per batch size. 
-
-
-### Make use of fused modules
-
-You can benefit from fused modules by passing an `AwqConfig` with `fuse_modules=True` and your expected maximum sequence length for generation to `fuse_max_seq_len`. For architectures that do not support `do_fuse=True`, you can still fuse the modules, however you need to pass a custom `fusing_mapping` to `AwqConfig()`. Let's dive into these specific usecases.
-
-Note that you cannot combine fusing modules and other optimization techniques such as Flash Attention 2.
-
-#### Fusing modules for supported architectures
-
-Currently we support out of the box AWQ module fusing for `llama` and `mistral`. 
-
-To enable this feature for supported architectures simply create an `AwqConfig` and pass the arguments `fuse_max_seq_len` and `do_fuse=True`.
-
-For example to enable module fusing for the model `TheBloke/Mistral-7B-OpenOrca-AWQ`, run:
+For example, to fuse the AWQ modules of the [TheBloke/Mistral-7B-OpenOrca-AWQ](https://huggingface.co/TheBloke/Mistral-7B-OpenOrca-AWQ) model.
 
 ```python
 import torch
@@ -144,14 +208,10 @@ quantization_config = AwqConfig(
 model = AutoModelForCausalLM.from_pretrained(model_id, quantization_config=quantization_config).to(0)
 ```
 
-Note that you need to define `fuse_max_seq_len` to `AwqConfig`. That total sequence length should include the context length and the expected generation length. You can set it to a large value to be on the safe zone.
+</hfoption>
+<hfoption id="unsupported architectures">
 
-You can also apply module fusing for other architectures that are not supported.
-
-#### Fusing modules for unsupported architectures
-
-For architectures that do not support out of the box module fusing, you can pass a custom fusing mapping; simply pass a dictionnary `modules_to_fuse` to `AwqConfig`, let's take an example with the Yi model:
-
+For architectures that don't support fused modules yet, you need to create a custom fusing mapping to define which modules need to be fused with the `modules_to_fuse` parameter. For example, to fuse the AWQ modules of the [TheBloke/Yi-34B-AWQ](https://huggingface.co/TheBloke/Yi-34B-AWQ) model.
 
 ```python
 import torch
@@ -176,54 +236,56 @@ quantization_config = AwqConfig(
 model = AutoModelForCausalLM.from_pretrained(model_id, quantization_config=quantization_config).to(0)
 ```
 
-The parameter `modules_to_fuse` needs to have the following respective fields: 
+The parameter `modules_to_fuse` should include:
 
-- `"attention"`: The names of the attention layers to fuse - in the order: query, key, value and output projection layer. In case you don't want to fuse the attention layers you can pass an empty list.
-- `"layernorm"`: The names of all the layernorm layers you want to replace with a custom fused layer norm. In case you don't want to fuse these layers you can also pass an empty list.
-- `"mlp"`: The names of the MLP layers you want to fuse into a single MLP layer in the order: (gate (dense layer post-attention) / up / down layers).
-- `"use_alibi"`: If you model uses alibi positional embedding
-- `"num_attention_heads"`: The number of attention heads
-- `"num_key_value_heads"`: This is the number of key value heads that should be used to implement Grouped Query Attention. If num_key_value_heads=num_attention_heads, the model will use Multi Head Attention (MHA), if num_key_value_heads=1 the model will use Multi Query Attention (MQA) otherwise GQA is used. 
-- `"hidden_size"`: Dimension of the hidden representations.
+- `"attention"`: The names of the attention layers to fuse in the following order: query, key, value and output projection layer. If you don't want to fuse these layers, pass an empty list.
+- `"layernorm"`: The names of all the LayerNorm layers you want to replace with a custom fused LayerNorm. If you don't want to fuse these layers, pass an empty list.
+- `"mlp"`: The names of the MLP layers you want to fuse into a single MLP layer in the order: (gate (dense, layer, post-attention) / up / down layers).
+- `"use_alibi"`: If your model uses ALiBi positional embedding.
+- `"num_attention_heads"`: The number of attention heads.
+- `"num_key_value_heads"`: The number of key value heads that should be used to implement Grouped Query Attention (GQA). If `num_key_value_heads=num_attention_heads`, the model will use Multi Head Attention (MHA), if `num_key_value_heads=1` the model will use Multi Query Attention (MQA), otherwise GQA is used.
+- `"hidden_size"`: The dimension of the hidden representations.
 
+</hfoption>
+</hfoptions>
 
-#### Benchmarks
+### Exllama-v2 support
 
-We benchmarked the model with and without fused modules first using only `batch_size=1` on the `TheBloke/Mistral-7B-OpenOrca-AWQ` model and below are the results:
+Recent versions of `autoawq` supports exllama-v2 kernels for faster prefill and decoding. To get started, first install the latest version of `autoawq` by running:
 
-*unfused case*
+```bash
+pip install git+https://github.com/casper-hansen/AutoAWQ.git
+```
 
-|   Batch Size |   Prefill Length |   Decode Length |   Prefill tokens/s |   Decode tokens/s | Memory (VRAM)   |
-|-------------:|-----------------:|----------------:|-------------------:|------------------:|:----------------|
-|            1 |               32 |              32 |            60.0984 |           38.4537 | 4.50 GB (5.68%) |
-|            1 |               64 |              64 |          1333.67   |           31.6604 | 4.50 GB (5.68%) |
-|            1 |              128 |             128 |          2434.06   |           31.6272 | 4.50 GB (5.68%) |
-|            1 |              256 |             256 |          3072.26   |           38.1731 | 4.50 GB (5.68%) |
-|            1 |              512 |             512 |          3184.74   |           31.6819 | 4.59 GB (5.80%) |
-|            1 |             1024 |            1024 |          3148.18   |           36.8031 | 4.81 GB (6.07%) |
-|            1 |             2048 |            2048 |          2927.33   |           35.2676 | 5.73 GB (7.23%) |
+Get started by passing an `AwqConfig()` with `version="exllama"`.
 
-*fused case*
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, AwqConfig
 
-|   Batch Size |   Prefill Length |   Decode Length |   Prefill tokens/s |   Decode tokens/s | Memory (VRAM)   |
-|-------------:|-----------------:|----------------:|-------------------:|------------------:|:----------------|
-|            1 |               32 |              32 |            81.4899 |           80.2569 | 4.00 GB (5.05%) |
-|            1 |               64 |              64 |          1756.1    |          106.26   | 4.00 GB (5.05%) |
-|            1 |              128 |             128 |          2479.32   |          105.631  | 4.00 GB (5.06%) |
-|            1 |              256 |             256 |          1813.6    |           85.7485 | 4.01 GB (5.06%) |
-|            1 |              512 |             512 |          2848.9    |           97.701  | 4.11 GB (5.19%) |
-|            1 |             1024 |            1024 |          3044.35   |           87.7323 | 4.41 GB (5.57%) |
-|            1 |             2048 |            2048 |          2715.11   |           89.4709 | 5.57 GB (7.04%) |
+quantization_config = AwqConfig(version="exllama")
 
-We also performed benchmarks with [`optimum-benchmark`](https://github.com/huggingface/optimum-benchmark) library. And below are the results:
+model = AutoModelForCausalLM.from_pretrained(
+    "TheBloke/Mistral-7B-Instruct-v0.1-AWQ",
+    quantization_config=quantization_config,
+    device_map="auto",
+)
 
-<div style="text-align: center">
-<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/quantization/fused_forward_memory_plot.png">
-</div>
+input_ids = torch.randint(0, 100, (1, 128), dtype=torch.long, device="cuda")
+output = model(input_ids)
+print(output.logits)
 
-<div style="text-align: center">
-<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/quantization/fused_generate_throughput_plot.png">
-</div>
+tokenizer = AutoTokenizer.from_pretrained("TheBloke/Mistral-7B-Instruct-v0.1-AWQ")
+input_ids = tokenizer.encode("How to make a cake", return_tensors="pt").to(model.device)
+output = model.generate(input_ids, do_sample=True, max_length=50, pad_token_id=50256)
+print(tokenizer.decode(output[0], skip_special_tokens=True))
+```
+
+<Tip warning={true}>
+
+Note this feature is supported on AMD GPUs.
+
+</Tip>
 
 
 ## AutoGPTQ
@@ -276,7 +338,7 @@ quantized_model = AutoModelForCausalLM.from_pretrained(model_id, device_map="aut
 
 <Tip warning={true}>
 
-Depending on your hardware, it can take some time to quantize a model from scratch. It can take ~5 minutes to quantize the [faceboook/opt-350m]() model on a free-tier Google Colab GPU, but it'll take ~4 hours to quantize a 175B parameter model on a NVIDIA A100. Before you quantize a model, it is a good idea to check the Hub if a GPTQ-quantized version of the model already exists.
+Depending on your hardware, it can take some time to quantize a model from scratch. It can take ~5 minutes to quantize the [facebook/opt-350m](https://huggingface.co/facebook/opt-350m) model on a free-tier Google Colab GPU, but it'll take ~4 hours to quantize a 175B parameter model on a NVIDIA A100. Before you quantize a model, it is a good idea to check the Hub if a GPTQ-quantized version of the model already exists.
 
 </Tip>
 
@@ -413,7 +475,7 @@ model_4bit = AutoModelForCausalLM.from_pretrained("facebook/opt-350m", load_in_4
 model_4bit.model.decoder.layers[-1].final_layer_norm.weight.dtype
 ```
 
-Once a model is quantized to 4-bit, you can't push the quantized weights to the Hub.
+If you have `bitsandbytes>=0.41.3`, you can serialize 4-bit models and push them on Hugging Face Hub. Simply call `model.push_to_hub()` after loading it in 4-bit precision. You can also save the serialized 4-bit models locally with `model.save_pretrained()` command.  
 
 </hfoption>
 </hfoptions>
@@ -536,6 +598,7 @@ Try 4-bit quantization in this [notebook](https://colab.research.google.com/driv
 
 This section explores some of the specific features of 4-bit models, such as changing the compute data type, using the Normal Float 4 (NF4) data type, and using nested quantization.
 
+
 #### Compute data type
 
 To speedup computation, you can change the data type from float32 (the default value) to bf16 using the `bnb_4bit_compute_dtype` parameter in [`BitsAndBytesConfig`]:
@@ -610,3 +673,44 @@ To compare the speed, throughput, and latency of each quantization scheme, check
 </div>
 
 The benchmarks indicate AWQ quantization is the fastest for inference, text generation, and has the lowest peak memory for text generation. However, AWQ has the largest forward latency per batch size. For a more detailed discussion about the pros and cons of each quantization method, read the [Overview of natively supported quantization schemes in 🤗 Transformers](https://huggingface.co/blog/overview-quantization-transformers) blog post.
+
+### Fused AWQ modules
+
+The [TheBloke/Mistral-7B-OpenOrca-AWQ](https://huggingface.co/TheBloke/Mistral-7B-OpenOrca-AWQ) model was benchmarked with `batch_size=1` with and without fused modules.
+
+<figcaption class="text-center text-gray-500 text-lg">Unfused module</figcaption>
+
+|   Batch Size |   Prefill Length |   Decode Length |   Prefill tokens/s |   Decode tokens/s | Memory (VRAM)   |
+|-------------:|-----------------:|----------------:|-------------------:|------------------:|:----------------|
+|            1 |               32 |              32 |            60.0984 |           38.4537 | 4.50 GB (5.68%) |
+|            1 |               64 |              64 |          1333.67   |           31.6604 | 4.50 GB (5.68%) |
+|            1 |              128 |             128 |          2434.06   |           31.6272 | 4.50 GB (5.68%) |
+|            1 |              256 |             256 |          3072.26   |           38.1731 | 4.50 GB (5.68%) |
+|            1 |              512 |             512 |          3184.74   |           31.6819 | 4.59 GB (5.80%) |
+|            1 |             1024 |            1024 |          3148.18   |           36.8031 | 4.81 GB (6.07%) |
+|            1 |             2048 |            2048 |          2927.33   |           35.2676 | 5.73 GB (7.23%) |
+
+<figcaption class="text-center text-gray-500 text-lg">Fused module</figcaption>
+
+|   Batch Size |   Prefill Length |   Decode Length |   Prefill tokens/s |   Decode tokens/s | Memory (VRAM)   |
+|-------------:|-----------------:|----------------:|-------------------:|------------------:|:----------------|
+|            1 |               32 |              32 |            81.4899 |           80.2569 | 4.00 GB (5.05%) |
+|            1 |               64 |              64 |          1756.1    |          106.26   | 4.00 GB (5.05%) |
+|            1 |              128 |             128 |          2479.32   |          105.631  | 4.00 GB (5.06%) |
+|            1 |              256 |             256 |          1813.6    |           85.7485 | 4.01 GB (5.06%) |
+|            1 |              512 |             512 |          2848.9    |           97.701  | 4.11 GB (5.19%) |
+|            1 |             1024 |            1024 |          3044.35   |           87.7323 | 4.41 GB (5.57%) |
+|            1 |             2048 |            2048 |          2715.11   |           89.4709 | 5.57 GB (7.04%) |
+
+The speed and throughput of fused and unfused modules were also tested with the [optimum-benchmark](https://github.com/huggingface/optimum-benchmark) library.
+
+<div class="flex gap-4">
+  <div>
+    <img class="rounded-xl" src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/quantization/fused_forward_memory_plot.png" alt="generate throughput per batch size" />
+    <figcaption class="mt-2 text-center text-sm text-gray-500">forward peak memory/batch size</figcaption>
+  </div>
+  <div>
+    <img class="rounded-xl" src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/quantization/fused_generate_throughput_plot.png" alt="forward latency per batch size" />
+    <figcaption class="mt-2 text-center text-sm text-gray-500">generate throughput/batch size</figcaption>
+  </div>
+</div>

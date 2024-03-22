@@ -82,7 +82,7 @@ def _get_unpad_data(attention_mask):
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
     max_seqlen_in_batch = seqlens_in_batch.max().item()
-    cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.torch.int32), (1, 0))
+    cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
     return (
         indices,
         cu_seqlens,
@@ -322,8 +322,10 @@ class DistilBertFlashAttention2(MultiHeadSelfAttention):
         # in fp32. (LlamaRMSNorm handles it correctly)
 
         if query_states.dtype == torch.float32:
+            if torch.is_autocast_enabled():
+                target_dtype = torch.get_autocast_gpu_dtype()
             # Handle the case where the model is quantized
-            if hasattr(self.config, "_pre_quantization_dtype"):
+            elif hasattr(self.config, "_pre_quantization_dtype"):
                 target_dtype = self.config._pre_quantization_dtype
             else:
                 target_dtype = self.q_lin.weight.dtype
@@ -368,7 +370,7 @@ class DistilBertFlashAttention2(MultiHeadSelfAttention):
             attention_mask (`torch.Tensor`):
                 The padding mask - corresponds to a tensor of size `(batch_size, seq_len)` where 0 stands for the
                 position of padding tokens and 1 for the position of non-padding tokens.
-            dropout (`int`, *optional*):
+            dropout (`float`):
                 Attention dropout
             softmax_scale (`float`, *optional*):
                 The scaling of QK^T before applying softmax. Default to 1 / sqrt(head_dim)
@@ -471,6 +473,12 @@ class FFN(nn.Module):
         return x
 
 
+DISTILBERT_ATTENTION_CLASSES = {
+    "eager": MultiHeadSelfAttention,
+    "flash_attention_2": DistilBertFlashAttention2,
+}
+
+
 class TransformerBlock(nn.Module):
     def __init__(self, config: PretrainedConfig):
         super().__init__()
@@ -479,11 +487,7 @@ class TransformerBlock(nn.Module):
         if config.dim % config.n_heads != 0:
             raise ValueError(f"config.n_heads {config.n_heads} must divide config.dim {config.dim} evenly")
 
-        self.attention = (
-            MultiHeadSelfAttention(config)
-            if not getattr(config, "_flash_attn_2_enabled", False)
-            else DistilBertFlashAttention2(config)
-        )
+        self.attention = DISTILBERT_ATTENTION_CLASSES[config._attn_implementation](config)
         self.sa_layer_norm = nn.LayerNorm(normalized_shape=config.dim, eps=1e-12)
 
         self.ffn = FFN(config)
@@ -703,6 +707,7 @@ class DistilBertModel(DistilBertPreTrainedModel):
 
         self.embeddings = Embeddings(config)  # Embeddings
         self.transformer = Transformer(config)  # Encoder
+        self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -808,7 +813,7 @@ class DistilBertModel(DistilBertPreTrainedModel):
 
         embeddings = self.embeddings(input_ids, inputs_embeds)  # (bs, seq_length, dim)
 
-        if getattr(self.config, "_flash_attn_2_enabled", False):
+        if self._use_flash_attention_2:
             attention_mask = attention_mask if (attention_mask is not None and 0 in attention_mask) else None
         else:
             if attention_mask is None:
